@@ -257,6 +257,9 @@ public class MyCoolAgent_DAS2 implements PlanningAgent{
 
 			}
 
+			/* Dead end? */
+			if(nextCell == null) return null;
+
 			currentCell = new GridCellInformed(nextCell, currentCell, map.cost(currentCell.cell, nextCell), map.hCost(nextCell, goalState),
 					0, weightG, weightH);
 		}
@@ -320,7 +323,8 @@ public class MyCoolAgent_DAS2 implements PlanningAgent{
 						}
 
 						/* Add child to open list */
-						GridCellInformed childCell = new GridCellInformed(child, currentCell, map.cost(currentCell.cell, child), map.hCost(child, goalState), eCurr, weightG, weightH);
+						GridCellInformed childCell = new GridCellInformed(child, currentCell, map.cost(currentCell.cell, child), map.hCost(
+								child, goalState), eCurr, weightG, weightH);
 						openList.add(childCell);
 					}
 
@@ -364,12 +368,12 @@ public class MyCoolAgent_DAS2 implements PlanningAgent{
 
 	private double dCheapest(GridCellInformed cell){
 		/* Used to compute dCheapest - for now simply the Manhattan distance */
-		return cell.cell.getCoord().getManhattenDistance(goalState.getCoord())*map.getMinCost();
+		return cell.cell.getCoord().getManhattenDistance(goalState.getCoord()) * map.getMinCost();
 	}
 
 	private double dCheapest(GridCell cell){
 		/* Used to compute dCheapest - for now simply the Manhattan distance */
-		return cell.getCoord().getManhattenDistance(goalState.getCoord())*map.getMinCost();
+		return cell.getCoord().getManhattenDistance(goalState.getCoord()) * map.getMinCost();
 	}
 
 	private void deprune(double deadline){
@@ -388,15 +392,20 @@ public class MyCoolAgent_DAS2 implements PlanningAgent{
 
 		/* Improve weight - inc. H and dec. G over time */
 		if(!goalFound){
-			GridCellInformed bestKnownCell = prunedList.peek();
-			double hBest = bestKnownCell != null ? bestKnownCell.h : exp;
-			weightH = (float)(1 - startHeuristic / hBest);
-			if(weightH < 0.1f) weightH = 0.1f;
+			// GridCellInformed bestKnownCell = prunedList.peek();
+			// double hBest = bestKnownCell != null ? bestKnownCell.h : exp;
+			// if(hBest!=0) weightH = (float)(1 - hBest / startHeuristic);
+			// if(weightH < 0.1f) weightH = 0.1f;
 
 			weightG = (float)(1 - timeLeft / startTime);
 			if(weightG < 0.1f) weightG = 0.1f;
 			if(weightG > 1) weightG = 1;
-			System.out.println("wG: " + weightG + "\n\twH: " + weightH);
+
+			weightH = (float)(startTime / timeLeft);
+
+			if(weightH - weightG < 1) weightH = weightG;
+			else weightG = 1f;
+//			System.out.println("wG: " + weightG + "\n\twH: " + weightH);
 		}
 
 		eCurr = 0;

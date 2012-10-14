@@ -66,10 +66,10 @@ public class GridCellInformed implements Comparable<GridCellInformed>{
 						if(comparison == 0){
 							/* Break ties by expansion time */
 							comparison = Double.compare(this.e, otherCell.e);
-							if(comparison == 0){
-								/* Oh chuck it, go random! */
-								comparison = (new Random()).nextInt(2) - 1;
-							}
+//							if(comparison == 0){
+//								/* Oh chuck it, go random! */
+//								comparison = (new Random()).nextInt(2) - 1;
+//							}
 						}
 					}
 				}
