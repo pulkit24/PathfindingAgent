@@ -8,7 +8,6 @@ import pplanning.simviewer.model.GridDomain;
 import pplanning.simviewer.model.SuccessorIterator;
 import agents.pulkit.GridCellInformed;
 import au.rmit.ract.planning.pathplanning.entity.ComputedPlan;
-import au.rmit.ract.planning.pathplanning.entity.Edge;
 import au.rmit.ract.planning.pathplanning.entity.State;
 
 public class MyCoolAgent_DAS2 implements PlanningAgent{
@@ -28,6 +27,10 @@ public class MyCoolAgent_DAS2 implements PlanningAgent{
 	private GridCell goalState = null;
 	private float startHeuristic = 0;
 	private long startTime = 0;
+	private GridCellInformed startCell = null;
+	private float minCost = 0;
+	private int[] operatorPreference;
+	private int connectivity = 4; // manhattan or euclidean, or anything else!
 
 	/* Agent state parameters */
 	private boolean planned = false; // track whether a final plan has been prepared
@@ -164,6 +167,13 @@ public class MyCoolAgent_DAS2 implements PlanningAgent{
 			goalState = gState;
 			startHeuristic = map.hCost(sState, gState);
 			startTime = timeLeft;
+			minCost = map.getMinCost();
+			/* Get goal direction */
+			operatorPreference = new int[2]; // North & East
+			float xdiff = gState.getCoord().getX() - sState.getCoord().getX();
+			float ydiff = gState.getCoord().getY() - sState.getCoord().getY();
+			operatorPreference[0] = ydiff > 0 ? 1 : (ydiff < 0 ? -1 : 0); // North
+			operatorPreference[1] = xdiff > 0 ? 1 : (xdiff < 0 ? -1 : 0); // East
 			/* Agent state parameters */
 			firstRun = false;
 			/* Partial replan parameters */
@@ -181,17 +191,17 @@ public class MyCoolAgent_DAS2 implements PlanningAgent{
 			}
 
 			/* Initialize start node */
-			GridCellInformed startCell = new GridCellInformed(sState, 0, startHeuristic, 0, weightG, weightH);
+			startCell = new GridCellInformed(sState, 0, startHeuristic, 0, weightG, weightH);
 			openList.offer(startCell);
 
 			/* Now on to make a plan */
 			/* Compute greedy solution first */
 			incumbent = greedy(startCell);
 
-			long timeBeforePlan = System.currentTimeMillis();
+			long timeBeforePlan = System.nanoTime();
 			extractPlan(sState, incumbent);
-			moveTimeReserved = System.currentTimeMillis() - timeBeforePlan;
-			moveTimeReserved *= 100;
+			moveTimeReserved = System.nanoTime() - timeBeforePlan;
+			moveTimeReserved /= 1E6; // convert to ms
 
 			return null;
 		}
@@ -202,7 +212,7 @@ public class MyCoolAgent_DAS2 implements PlanningAgent{
 				closedList = new GridCellInformed[map.getWidth()][map.getHeight()];
 
 				/* Execute DAS */
-				das(System.currentTimeMillis() + timeLeft - moveTimeReserved);
+				das(startCell, System.currentTimeMillis() + timeLeft - moveTimeReserved);
 
 				/* Regenerate plan only if a new goal found */
 				if(goalFound) extractPlan(sState, incumbent);
@@ -234,6 +244,8 @@ public class MyCoolAgent_DAS2 implements PlanningAgent{
 	private GridCellInformed greedy(GridCellInformed currentCell){
 		/* Get a failsafe greedy path */
 		/* Iterate over all cells */
+		boolean firstIteration = true;
+
 		while(!currentCell.cell.equals(goalState)){
 			markClosed(currentCell);
 
@@ -245,6 +257,7 @@ public class MyCoolAgent_DAS2 implements PlanningAgent{
 			GridCell child;
 
 			while((child = childIterator.next()) != null){
+				if(firstIteration) connectivity++; // take this opportunity to determine map connectivity
 
 				if(isClosed(child) || map.isBlocked(child) || child.equals(currentCell.cell)) continue;
 
@@ -254,13 +267,14 @@ public class MyCoolAgent_DAS2 implements PlanningAgent{
 					minH = thisH;
 					nextCell = child;
 				}
-
 			}
+
+			if(firstIteration) firstIteration = false;
 
 			/* Dead end? */
 			if(nextCell == null) return null;
 
-			currentCell = new GridCellInformed(nextCell, currentCell, map.cost(currentCell.cell, nextCell), map.hCost(nextCell, goalState),
+			currentCell = new GridCellInformed(nextCell, currentCell, map.cost(currentCell.cell, nextCell), hCost(nextCell, currentCell),
 					0, weightG, weightH);
 		}
 
@@ -269,18 +283,22 @@ public class MyCoolAgent_DAS2 implements PlanningAgent{
 		return currentCell;
 	}
 
-	private GridCellInformed das(double deadline){
+	private GridCellInformed das(GridCellInformed startCell, double deadline){
 		/* As long as we have time ... */
 		while(deadline - System.currentTimeMillis() > averageTimeTaken){
 
 			/* While the open list is empty */
-			if(!openList.isEmpty()){
+			if(startCell != null || !openList.isEmpty()){
 
 				/* How many levels ahead can we go at this rate? */
 				double dmax = calculateDBound(deadline);
 
-				/* Get the next node from the open list */
-				GridCellInformed currentCell = openList.poll();
+				/* Get the next node from the open list or the supplied start node */
+				GridCellInformed currentCell;
+				if(startCell != null){
+					currentCell = startCell;
+					startCell = null; // disable for next iteration
+				}else currentCell = openList.poll();
 				markClosed(currentCell); // add it to visited
 
 				/* Is it worse than the incumbent solution found? */
@@ -319,12 +337,12 @@ public class MyCoolAgent_DAS2 implements PlanningAgent{
 
 						/* Have we already seen this node? */
 						if(isClosed(child) || map.isBlocked(child) || child.equals(currentCell.cell)){
-							continue; // skip if already visited/added to open list
+							continue; // skip
 						}
 
 						/* Add child to open list */
-						GridCellInformed childCell = new GridCellInformed(child, currentCell, map.cost(currentCell.cell, child), map.hCost(
-								child, goalState), eCurr, weightG, weightH);
+						GridCellInformed childCell = new GridCellInformed(child, currentCell, map.cost(currentCell.cell, child), hCost(
+								child, currentCell), eCurr, weightG, weightH);
 						openList.add(childCell);
 					}
 
@@ -368,12 +386,27 @@ public class MyCoolAgent_DAS2 implements PlanningAgent{
 
 	private double dCheapest(GridCellInformed cell){
 		/* Used to compute dCheapest - for now simply the Manhattan distance */
-		return cell.cell.getCoord().getManhattenDistance(goalState.getCoord()) * map.getMinCost();
+		return cell.cell.getCoord().getManhattenDistance(goalState.getCoord());
 	}
 
 	private double dCheapest(GridCell cell){
 		/* Used to compute dCheapest - for now simply the Manhattan distance */
-		return cell.getCoord().getManhattenDistance(goalState.getCoord()) * map.getMinCost();
+		return cell.getCoord().getManhattenDistance(goalState.getCoord());
+	}
+
+	private double hCost(GridCell cell, GridCellInformed parent){
+		float xdiff = cell.getCoord().getX() - parent.cell.getCoord().getX();
+		float ydiff = cell.getCoord().getY() - parent.cell.getCoord().getY();
+		int north = ydiff > 0 ? 1 : (ydiff < 0 ? -1 : 0); // North
+		north *= operatorPreference[0];
+//		north = north == 0 ? -1 : north;
+		int east = xdiff > 0 ? 1 : (xdiff < 0 ? -1 : 0); // East
+		east *= operatorPreference[1];
+//		east = east == 0 ? -1 : east;
+
+		double h = parent.h - (north * minCost) - (east * minCost);
+		// System.out.println(cell+" h: "+h+"\n\tparent h: "+parent.h);
+		return h;
 	}
 
 	private void deprune(double deadline){
@@ -388,27 +421,22 @@ public class MyCoolAgent_DAS2 implements PlanningAgent{
 			}
 			tDelaySum /= 1000000; // convert to ms
 			exp = (timeLeft * windowSize) / tDelaySum;
+
+			/* Improve weight - inc. H and dec. G over time */
+			 weightG = (float)(1 - timeLeft / startTime);
+			 if(weightG < 0.1f) weightG = 0.1f;
+			 if(weightG > 1) weightG = 1;
+			
+//			 weightH = (float)(1+ minCost/startHeuristic);
+			 weightH = (float)(startTime / timeLeft);
+			
+			 if(!goalFound && (weightH + weightG <= 2)) weightH = weightG;
+			 else weightG = 1f;
+			// System.out.println("wG: " + weightG + "\n\twH: " + weightH);
+
 		}
 
-		/* Improve weight - inc. H and dec. G over time */
-		if(!goalFound){
-			// GridCellInformed bestKnownCell = prunedList.peek();
-			// double hBest = bestKnownCell != null ? bestKnownCell.h : exp;
-			// if(hBest!=0) weightH = (float)(1 - hBest / startHeuristic);
-			// if(weightH < 0.1f) weightH = 0.1f;
-
-			weightG = (float)(1 - timeLeft / startTime);
-			if(weightG < 0.1f) weightG = 0.1f;
-			if(weightG > 1) weightG = 1;
-
-			weightH = (float)(startTime / timeLeft);
-
-			if(weightH - weightG < 1) weightH = weightG;
-			else weightG = 1f;
-//			System.out.println("wG: " + weightG + "\n\twH: " + weightH);
-		}
-
-		eCurr = 0;
+		// eCurr = 0;
 
 		while(exp > 0 && !prunedList.isEmpty()){
 			GridCellInformed s = prunedList.poll();
@@ -420,11 +448,11 @@ public class MyCoolAgent_DAS2 implements PlanningAgent{
 			exp -= dCheapest(s);
 		}
 		/* Reset delay window and settling time */
-		eDelayWindow = new int[windowSize];
-		for(int i = 0; i < windowSize; i++){
-			eDelayWindow[i] = 0;
-			tDelayWindow[i] = 0;
-		}
+		// eDelayWindow = new int[windowSize];
+		// for(int i = 0; i < windowSize; i++){
+		// eDelayWindow[i] = 0;
+		// tDelayWindow[i] = 0;
+		// }
 		settlingTimeLeft = settlingTime;
 	}
 
