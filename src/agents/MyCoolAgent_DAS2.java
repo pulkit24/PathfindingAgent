@@ -170,10 +170,7 @@ public class MyCoolAgent_DAS2 implements PlanningAgent{
 			minCost = map.getMinCost();
 			/* Get goal direction */
 			operatorPreference = new int[2]; // North & East
-			float xdiff = gState.getCoord().getX() - sState.getCoord().getX();
-			float ydiff = gState.getCoord().getY() - sState.getCoord().getY();
-			operatorPreference[0] = ydiff > 0 ? 1 : (ydiff < 0 ? -1 : 0); // North
-			operatorPreference[1] = xdiff > 0 ? 1 : (xdiff < 0 ? -1 : 0); // East
+			setOperatorPreference(sState, gState);
 			/* Agent state parameters */
 			firstRun = false;
 			/* Partial replan parameters */
@@ -229,6 +226,13 @@ public class MyCoolAgent_DAS2 implements PlanningAgent{
 			return null;
 		}
 		return (GridCell)bestPath.getStep(pathStepNo++);
+	}
+
+	private void setOperatorPreference(GridCell sState, GridCell gState){
+		float xdiff = gState.getCoord().getX() - sState.getCoord().getX();
+		float ydiff = gState.getCoord().getY() - sState.getCoord().getY();
+		operatorPreference[0] = ydiff > 0 ? 1 : (ydiff < 0 ? -1 : 0); // North
+		operatorPreference[1] = xdiff > 0 ? 1 : (xdiff < 0 ? -1 : 0); // East
 	}
 
 	private void extractPlan(GridCell sState, GridCellInformed goalNodePossible){
@@ -336,7 +340,17 @@ public class MyCoolAgent_DAS2 implements PlanningAgent{
 					while((child = childIterator.next()) != null){
 
 						/* Have we already seen this node? */
-						if(isClosed(child) || map.isBlocked(child) || child.equals(currentCell.cell)){
+						if(isClosed(child)){
+							if(!goalFound){	// only do it once
+								/* Is this a better path? */
+								GridCellInformed childCell = closedList[child.getCoord().getX()][child.getCoord().getY()];
+								if(childCell.parent != null && currentCell.fUnweighted < childCell.parent.fUnweighted){
+									childCell.updateCosts(map.cost(currentCell.cell, child), childCell.h, weightG, weightH);
+									childCell.parent = currentCell;
+								}
+							}
+							continue;
+						}else if(map.isBlocked(child) || child.equals(currentCell.cell)){
 							continue; // skip
 						}
 
@@ -395,14 +409,16 @@ public class MyCoolAgent_DAS2 implements PlanningAgent{
 	}
 
 	private double hCost(GridCell cell, GridCellInformed parent){
+		setOperatorPreference(cell, goalState);
+
 		float xdiff = cell.getCoord().getX() - parent.cell.getCoord().getX();
 		float ydiff = cell.getCoord().getY() - parent.cell.getCoord().getY();
 		int north = ydiff > 0 ? 1 : (ydiff < 0 ? -1 : 0); // North
 		north *= operatorPreference[0];
-//		north = north == 0 ? -1 : north;
+		// north = north == 0 ? -1 : north;
 		int east = xdiff > 0 ? 1 : (xdiff < 0 ? -1 : 0); // East
 		east *= operatorPreference[1];
-//		east = east == 0 ? -1 : east;
+		// east = east == 0 ? -1 : east;
 
 		double h = parent.h - (north * minCost) - (east * minCost);
 		// System.out.println(cell+" h: "+h+"\n\tparent h: "+parent.h);
@@ -423,20 +439,17 @@ public class MyCoolAgent_DAS2 implements PlanningAgent{
 			exp = (timeLeft * windowSize) / tDelaySum;
 
 			/* Improve weight - inc. H and dec. G over time */
-			 weightG = (float)(1 - timeLeft / startTime);
-			 if(weightG < 0.1f) weightG = 0.1f;
-			 if(weightG > 1) weightG = 1;
-			
-//			 weightH = (float)(1+ minCost/startHeuristic);
-			 weightH = (float)(startTime / timeLeft);
-			
-			 if(!goalFound && (weightH + weightG <= 2)) weightH = weightG;
-			 else weightG = 1f;
+			weightG = (float)(1 - timeLeft / startTime);
+			if(weightG < 0.1f) weightG = 0.1f;
+			if(weightG > 1) weightG = 1;
+
+			weightH = (float)(startTime / timeLeft);
+
+			if(!goalFound && (weightH + weightG <= 2)) weightH = weightG;
+			else weightG = 1f;
 			// System.out.println("wG: " + weightG + "\n\twH: " + weightH);
 
 		}
-
-		// eCurr = 0;
 
 		while(exp > 0 && !prunedList.isEmpty()){
 			GridCellInformed s = prunedList.poll();
@@ -447,12 +460,6 @@ public class MyCoolAgent_DAS2 implements PlanningAgent{
 			openList.offer(s);
 			exp -= dCheapest(s);
 		}
-		/* Reset delay window and settling time */
-		// eDelayWindow = new int[windowSize];
-		// for(int i = 0; i < windowSize; i++){
-		// eDelayWindow[i] = 0;
-		// tDelayWindow[i] = 0;
-		// }
 		settlingTimeLeft = settlingTime;
 	}
 
