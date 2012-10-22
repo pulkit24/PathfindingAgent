@@ -1,3 +1,13 @@
+/**@Pulkit - 3360413
+ * RMIT University
+ * 
+ * Agent implementation for pathfinding on Apparate
+ * using Deadline-Aware Search (DAS), with modifications.
+ * Operation:
+ *  1. On first call to getNextMove(), an incumbent greedy output is generated
+ *  2. On the next call, a full DAS output is generated (if possible)
+ *  3. Third call onwards, the next node is returned for the agent to move
+ */
 package agents;
 
 import java.util.ArrayList;
@@ -15,68 +25,69 @@ public class MyCoolAgent implements PlanningAgent{
 	/* Node lists */
 	private PriorityQueue<GridCellInformed> openList;
 	private PriorityQueue<GridCellInformed> prunedList;
-	private GridCellInformed[][] closedList;
+	private GridCellInformed[][] closedList;	// easily retrievable record of visited nodes
 
-	/* Solution stores */
+	/* Solution stores and information */
 	private ComputedPlan bestPath;
-	private GridCellInformed incumbent = null;
-	private boolean goalFound = false;
-	private int pathStepNo = 0;
+	private GridCellInformed incumbent = null;	// best known solution so far
+	private boolean goalFound = false;			// handy flag for toggling anything you want when a goal is found
+	private int pathStepNo = 0;					// index pointer to the path step in bestPath
 
 	/* Map parameters */
-	private GridDomain map;
-	private GridCell goalState = null;
-	private float startHeuristic = 0;
-	private long startTime = 0;
-	private GridCellInformed startCell = null;
-	private float minCost = 0;
-	private int[] operatorPreference;
-	private int connectivity = 4; // manhattan or euclidean, or anything else!
+	private GridDomain map;						// stores the full map for further use across functions
+	private GridCell goalState = null;			// stores the final goal - use it to check if goal has moved
+	private float startHeuristic = 0;			// if you want to compare current situation against start (e.g., dynamic weighting)
+	private long startTime = 0;					// same as above, but with time
+	private GridCellInformed startCell = null;	// initial node for the current search algorithm
+	private float minCost = 0;					// min cost of any edge on this map - used for calculating your own heuristic
+	private int[] operatorPreference;			// [North, East], each direction +1 for preferred, -1 not, 0 don't care
+	private int connectivity = 0; 				// manhattan or euclidean, or anything else (3D?)!
 
 	/* Agent state parameters */
-	private boolean planned = false; // track whether a final plan has been prepared
-	private boolean firstRun = true; // to run greedy first
-	private boolean secondRun = false; // to run DAS next
-	private long lastTimeNotice = 0; // to track the last notice of timeleft, and hence if more time has been allotted
+	private boolean planned = false; 			// track whether a final plan has been prepared
+	private boolean firstRun = true; 			// to run greedy first (or any backup pathfinder)
+	private boolean secondRun = false; 			// to run DAS next (or whatever's the main pathfinder)
+	private long lastTimeNotice = 0; 			// to track the last notice of timeleft, and hence if more time has been allotted
 
 	/* Agent configuration */
-	private long timeReserved = 0; // in ms - time reserved for moving
-	private float weightG = 1.0f; // weight given to g
-	private float weightH = 1.0f; // weight given to h
+	private long timeReserved = 0; 				// in ms - time reserved for generating ComputedPlan from the resultant goal node
+	private float weightG = 1.0f; 				// weight given to g, if any
+	private float weightH = 1.0f; 				// weight given to h, if any
 
 	/* DAS-specific parameters */
-	private int windowSize = 20;
-	private int settlingTime = 20;
-	private int settlingTimeLeft;
+	private int windowSize = 20;				// magic number! but inescapable
+	private int settlingTime = 20;				// >= window size
+	private int settlingTimeLeft;				// to track the time left before dmax is calculated
 	/* Expansion counters */
 	private int eCurr = 0;
 	private int[] eDelayWindow = new int[windowSize];
 	private int eDelayWindowCurrPosition = 0;
 	/* Time counters */
-	/* Expansion time counter for DAS */
 	private long tPreExpansion = 0;
 	private long[] tDelayWindow = new long[windowSize];
 	private int tDelayWindowCurrPosition = 0;
-	private double averageTimeTaken = 0;
+	/* Time counter for full DAS iteration */
+	private double averageTimeTaken = 0;		// so we can avoid entering another iteration if time left is less than average time taken
 
 	@Override
 	public GridCell getNextMove(GridDomain map, GridCell sState, GridCell gState, int stepLeft, long stepTime, long timeLeft){
 		/* Which run is this? */
 		if(!firstRun && !secondRun) secondRun = true;
-		/* Some partial replan parameter declarations for later use */
-
+		
 		/* Store latest map */
 		this.map = map;
 
 		/* Dynamism - do we need to replan? */
 		if(planned){
+			
 			/* 1. Goal moved */
 			if(!goalState.equals(gState)){
-				System.out.println("Dyn: goal moved");
+				
 				/* Did it move away? */
 				double oldDistance = sState.getCoord().getManhattenDistance(goalState.getCoord());
 				double newDistance = sState.getCoord().getManhattenDistance(gState.getCoord());
 				if(oldDistance < newDistance){
+					
 					/* Plan a path between those goal positions */
 					startCell = closedList[goalState.getCoord().getX()][goalState.getCoord().getY()];
 					startCell.parent = null;
@@ -84,9 +95,11 @@ public class MyCoolAgent implements PlanningAgent{
 					initializeParameters(map, goalState, gState, timeLeft);
 					startCell.updateCosts(0, startHeuristic, 1, 1);
 					ComputedPlan goalPath = executeDAS(map, oldGoalCell, startCell, timeLeft, 0);
+					
 					/* Join paths */
 					for(int i = 0; i < goalPath.getLength(); i++)
 						bestPath.appendStep(goalPath.getStep(i));
+					
 				}else{
 					/* Worthless, re-plan */
 					planned = false;
@@ -97,12 +110,14 @@ public class MyCoolAgent implements PlanningAgent{
 
 			/* 2. Map has changed */
 			else if(map.getChangedEdges().size() > 0){
-				System.out.println("Dyn: map changed");
+				
 				/* Did anything change on our path? */
 				for(Edge edge:map.getChangedEdges()){
+					
 					/* Iterate over the rest of the path left to find out */
 					for(int i = pathStepNo; i < bestPath.getLength(); i++){
 						State pivotState = bestPath.getStep(i);
+						
 						if(pivotState.equals(edge.getStart()) || pivotState.equals(edge.getEnd())){
 							/* Yes! Replan! */
 							planned = false;
@@ -117,7 +132,6 @@ public class MyCoolAgent implements PlanningAgent{
 
 			/* 3. Time was generously increased with none of the above accompanying causes */
 			else if(lastTimeNotice < timeLeft){
-				System.out.println("Dyn: time added");
 				/* Resume DAS */
 
 				/* Find the current f cost ahead to the goal */
@@ -136,8 +150,9 @@ public class MyCoolAgent implements PlanningAgent{
 		/* Record the time allotted */
 		lastTimeNotice = timeLeft;
 
-		/* Reset all parameters */
+		/* First run - do a basic pathfinder for contingency */
 		if(!planned && firstRun){
+			/* Reset all parameters */
 			/* Agent state parameters */
 			firstRun = false;
 
@@ -149,7 +164,7 @@ public class MyCoolAgent implements PlanningAgent{
 			openList.offer(startCell);
 
 			/* Now on to make a plan */
-			/* Compute greedy solution first */
+			/* Compute greedy solution first - or any incumbent solution finder */
 			incumbent = greedy(startCell);
 
 			/* Generate plan, all the while assessing the time taken to do so */
@@ -161,9 +176,11 @@ public class MyCoolAgent implements PlanningAgent{
 			return null;
 		}
 
+		/* Second run - do full pathfinder - DAS in our case */
 		if(!planned && secondRun){
+			/* Run DAS */
 			bestPath = executeDAS(map, sState, null, timeLeft, 0);
-			pathStepNo = 0; // reset step counter
+			pathStepNo = 0; 		// init step counter
 
 			planned = true;
 		}
@@ -175,66 +192,16 @@ public class MyCoolAgent implements PlanningAgent{
 		return (GridCell)bestPath.getStep(pathStepNo++);
 	}
 
-	private ComputedPlan executeDAS(GridDomain map, GridCell sState, GridCellInformed startCell, long timeLeft, double maxF){
-		if(timeLeft > timeReserved){
-			/* Clear closed list */
-			closedList = new GridCellInformed[map.getWidth()][map.getHeight()];
-
-			/* Execute DAS */
-			das(startCell, System.currentTimeMillis() + timeLeft - timeReserved);
-
-			/* Regenerate plan only if a new goal found */
-			if(goalFound && (maxF <= 0 || incumbent.fUnweighted < maxF)) return extractPlan(sState, incumbent);
-		}
-		return bestPath;
-	}
-
-	private void initializeParameters(GridDomain map, GridCell sState, GridCell gState, long timeLeft){
-		/* Node lists */
-		openList = new PriorityQueue<GridCellInformed>(100);
-		prunedList = new PriorityQueue<GridCellInformed>(100);
-		closedList = new GridCellInformed[map.getWidth()][map.getHeight()];
-		/* Solution stores */
-		incumbent = null;
-		goalFound = false;
-		/* Map parameters */
-		goalState = gState;
-		startHeuristic = map.hCost(sState, gState);
-		startTime = timeLeft;
-		minCost = map.getMinCost();
-		/* Get goal direction */
-		operatorPreference = new int[2]; // North & East
-		setOperatorPreference(sState, goalState);
-		/* Agent configuration */
-		weightG = 1f;
-		weightH = 1f;
-		/* DAS-specific parameters */
-		settlingTimeLeft = settlingTime;
-		/* Expansion and time counters */
-		for(int i = 0; i < windowSize; i++){
-			eDelayWindow[i] = 0;
-			tDelayWindow[i] = 0;
-		}
-	}
-
-	private void setOperatorPreference(GridCell sState, GridCell gState){
-		float xdiff = gState.getCoord().getX() - sState.getCoord().getX();
-		float ydiff = gState.getCoord().getY() - sState.getCoord().getY();
-		operatorPreference[0] = ydiff > 0 ? 1 : (ydiff < 0 ? -1 : 0); // North
-		operatorPreference[1] = xdiff > 0 ? 1 : (xdiff < 0 ? -1 : 0); // East
-	}
-
-	private ComputedPlan extractPlan(GridCell sState, GridCellInformed goalNode){
-		/* Construct path from goal node */
-		ComputedPlan path = new ComputedPlan();
-		while(goalNode != null){
-			path.prependStep(goalNode.cell);
-			goalNode = goalNode.parent;
-		}
-		path.prependStep(sState);
-		return path;
-	}
-
+	/****************************************************************
+	 * 		Contingency search - Greedy
+	 * 		Replace with any pathfinding algorithm as needed
+	 * 
+	 * Performs greedy search and returns a goal node. Path can be traced back 
+	 * from the goal node using extractPlan()
+	 * 
+	 * @param currentCell - start cell for the greedy algorithm
+	 * @return incumbent goal node
+	 */
 	private GridCellInformed greedy(GridCellInformed currentCell){
 		/* Get a failsafe greedy path */
 		/* Iterate over all cells */
@@ -272,11 +239,43 @@ public class MyCoolAgent implements PlanningAgent{
 					0, weightG, weightH);
 		}
 
-		System.out.println("Greedy goal f: " + currentCell.fUnweighted);
-
 		return currentCell;
 	}
 
+	/****************************************************************
+	 * 
+	 * 				Main search algorithm: DAS in our case
+	 * 
+	 * Executes DAS and returns a full computed plan.
+	 * 
+	 * @param map - game board
+	 * @param sState - start cell
+	 * @param startCell - (optional) start cell with costs already recorded
+	 * @param timeLeft - for establishing deadline for DAS
+	 * @param maxF - for subsequent DAS runs, you can tell it to find solutions of no more than maxF cost
+	 * @return full computed plan
+	 */
+	private ComputedPlan executeDAS(GridDomain map, GridCell sState, GridCellInformed startCell, long timeLeft, double maxF){
+		if(timeLeft > timeReserved){
+			/* Clear closed list */
+			closedList = new GridCellInformed[map.getWidth()][map.getHeight()];
+	
+			/* Execute DAS */
+			das(startCell, System.currentTimeMillis() + timeLeft - timeReserved);
+	
+			/* Regenerate plan only if a new goal found */
+			if(goalFound && (maxF <= 0 || incumbent.fUnweighted < maxF)) return extractPlan(sState, incumbent);
+		}
+		return bestPath;
+	}
+
+	/** Core DAS algorithm. Solution path can be traced back from 
+	 * returned goal node using extractPlan()
+	 * 
+	 * @param startCell - start cell with initial costs set
+	 * @param deadline - time in millis since Jan 1, 1970, until DAS can run
+	 * @return returns the goal node
+	 */
 	private GridCellInformed das(GridCellInformed startCell, double deadline){
 		/* As long as we have time ... */
 		while(deadline - System.currentTimeMillis() > averageTimeTaken){
@@ -311,7 +310,7 @@ public class MyCoolAgent implements PlanningAgent{
 
 					goalFound = true;
 
-					System.out.println("DAS goal f: " + currentCell.fUnweighted);
+					// System.out.println("DAS goal f: " + currentCell.fUnweighted);
 
 				}else if(dCheapest(currentCell) < dmax){
 
@@ -331,15 +330,11 @@ public class MyCoolAgent implements PlanningAgent{
 
 						/* Have we already seen this node? */
 						if(isClosed(child)){
-							if(!goalFound){ // only do it once
-								/* Is this a better path? */
-								GridCellInformed childCell = closedList[child.getCoord().getX()][child.getCoord().getY()];
-								if(childCell.parent != null && currentCell.fUnweighted < childCell.parent.fUnweighted){
-									childCell.updateCosts(map.cost(currentCell.cell, child), childCell.h, weightG, weightH);
-									childCell.parent = currentCell;
-								}
-							}
-							continue;
+							/* Is this a better path? */
+							GridCellInformed childCell = closedList[child.getCoord().getX()][child.getCoord().getY()];
+							if(childCell.parent != null && currentCell.fUnweighted < childCell.parent.fUnweighted){
+								unmarkClosed(childCell);
+							}else continue;
 						}else if(map.isBlocked(child) || child.equals(currentCell.cell)){
 							continue; // skip
 						}
@@ -369,6 +364,11 @@ public class MyCoolAgent implements PlanningAgent{
 		return incumbent;
 	}
 
+	/** Function for computing dmax - will not compute dmax (return infinity)
+	 * for the duration of settlingTime
+	 * @param deadline - allotted to DAS
+	 * @return dmax value
+	 */
 	private double calculateDBound(double deadline){
 		/* Used to calculate dmax */
 		if(settlingTimeLeft > 0){
@@ -388,37 +388,27 @@ public class MyCoolAgent implements PlanningAgent{
 		}
 	}
 
+	/** Computes dCheapest. So far, doesn't get into the whole 
+	 * dCheapest_hat and dCheapest_error factors, for simplicity.
+	 * 
+	 * @param cell - cell for which dCheapest must be calculated
+	 * @return dCheapest, i.e., min estimated cost to goal
+	 */
 	private double dCheapest(GridCellInformed cell){
-		/* Used to compute dCheapest - for now simply the Manhattan distance */
-		return cell.cell.getCoord().getManhattenDistance(goalState.getCoord());
+		return dCheapest(cell.cell);
 	}
-
 	private double dCheapest(GridCell cell){
 		/* Used to compute dCheapest - for now simply the Manhattan distance */
-		return cell.getCoord().getManhattenDistance(goalState.getCoord());
+		double x = Math.abs(cell.getCoord().getX() - goalState.getCoord().getX());
+		double y = Math.abs(cell.getCoord().getY() - goalState.getCoord().getY());
+		return Math.max(x, y) + (Math.sqrt(2) - 1) * Math.min(x, y);
 	}
 
-	private double hCost(GridCell cell, GridCellInformed parent){
-
-		float xdiff = cell.getCoord().getX() - parent.cell.getCoord().getX();
-		float ydiff = cell.getCoord().getY() - parent.cell.getCoord().getY();
-		
-//		if(Math.abs(xdiff)<0.1*startHeuristic && Math.abs(ydiff)<0.1*startHeuristic){
-			setOperatorPreference(parent.cell, goalState);
-//		}
-		
-		int north = ydiff > 0 ? 1 : (ydiff < 0 ? -1 : 0); // North
-		north *= operatorPreference[0];
-		// north = north == 0 ? -1 : north;
-		int east = xdiff > 0 ? 1 : (xdiff < 0 ? -1 : 0); // East
-		east *= operatorPreference[1];
-		// east = east == 0 ? -1 : east;
-
-		double h = parent.h - (north * minCost) - (east * minCost);
-		// System.out.println(cell+" h: "+h+"\n\tparent h: "+parent.h);
-		return h;
-	}
-
+	/** DAS-specific function to recover pruned nodes. 
+	 * As a result, the open list will now have new nodes to consider.
+	 * 
+	 * @param deadline - allotted to DAS
+	 */
 	private void deprune(double deadline){
 		/* Used to recover pruned nodes */
 		double exp, timeLeft = deadline - System.currentTimeMillis();
@@ -433,17 +423,17 @@ public class MyCoolAgent implements PlanningAgent{
 			exp = (timeLeft * windowSize) / tDelaySum;
 
 			/* Improve weight - inc. H and dec. G over time */
+			weightH = (float)(startTime / timeLeft);
+			if(weightH > startHeuristic) weightH = startHeuristic;
+
+			/* Weight on G disabled
 			weightG = (float)(1 - timeLeft / startTime);
 			if(weightG < 0.1f) weightG = 0.1f;
 			if(weightG > 1) weightG = 1;
 
-			weightH = (float)(startTime / timeLeft);
-			if(weightH > startHeuristic) weightH = startHeuristic;
-
 			if(!goalFound && (weightH + weightG <= 2)) weightH = weightG;
 			else weightG = 1f;
-//			 System.out.println("wG: " + weightG + "\n\twH: " + weightH);
-
+			*/
 		}
 
 		while(exp > 0 && !prunedList.isEmpty()){
@@ -458,23 +448,154 @@ public class MyCoolAgent implements PlanningAgent{
 		settlingTimeLeft = settlingTime;
 	}
 
+	
+	/****************************************************************
+	 * 
+	 * 				Heuristic computation
+	 * 
+	 * Sets operator preference - [North, East] where both directions are
+	 * +1 if that direction is favoured
+	 * -1 if not, and 0 if that direction is irrelevant.
+	 * Direction is considered favoured if the goal is in that direction.
+	 * 
+	 * Use this function in the hCost() function.
+	 * 
+	 * @param sState - start state
+	 * @param gState - goal state
+	 */
+	private void setOperatorPreference(GridCell sState, GridCell gState){
+		float xdiff = gState.getCoord().getX() - sState.getCoord().getX();
+		float ydiff = gState.getCoord().getY() - sState.getCoord().getY();
+	
+		if(Math.abs(xdiff) > Math.abs(ydiff)){
+			operatorPreference[0] = 0; // North
+			operatorPreference[1] = xdiff > 0 ? 1 : (xdiff < 0 ? -1 : 0); // East
+		}else if(Math.abs(ydiff) > Math.abs(xdiff)){
+			operatorPreference[0] = ydiff > 0 ? 1 : (ydiff < 0 ? -1 : 0); // North
+			operatorPreference[1] = 0; // East
+		}else{
+			operatorPreference[0] = ydiff > 0 ? 1 : (ydiff < 0 ? -1 : 0); // North
+			operatorPreference[1] = xdiff > 0 ? 1 : (xdiff < 0 ? -1 : 0); // East
+		}
+	}
+
+	/** Compute heuristic cost, overriding map.hCost provided by Apparate.
+	 * Uses incremental heuristic computation. I.e., heuristic child = heuristic parent + 1, or -1, or same.
+	 * based on if the motion was towards the goal, away, etc.
+	 * 
+	 * @param cell - cell whose h is needed
+	 * @param parent - cell's parent, for quick incremental heuristic computation
+	 * @return heuristic value
+	 */
+	private double hCost(GridCell cell, GridCellInformed parent){
+			float xdiff = cell.getCoord().getX() - parent.cell.getCoord().getX();
+			float ydiff = cell.getCoord().getY() - parent.cell.getCoord().getY();
+	
+			setOperatorPreference(parent.cell, goalState);
+	
+			int north = ydiff > 0 ? 1 : (ydiff < 0 ? -1 : 0); // North
+			north *= operatorPreference[0];
+			int east = xdiff > 0 ? 1 : (xdiff < 0 ? -1 : 0); // East
+			east *= operatorPreference[1];
+	
+			double change = (north * minCost) + (east * minCost);
+	//		if(Math.abs(change) >= 1) change = Math.signum(change);
+			double h = parent.h - change;
+			return h;
+		}
+
+	/****************************************************************
+	 * 
+	 * 				Extra utility functions for agent operation
+	 * 
+	 * Reset all parameters to initial/default values. 
+	 * Handy functions to reset whenever you want.
+	 * 
+	 * @param map - game map
+	 * @param sState - start state
+	 * @param gState - goal state
+	 * @param timeLeft - time left, what else?
+	 */
+	private void initializeParameters(GridDomain map, GridCell sState, GridCell gState, long timeLeft){
+		/* Node lists */
+		openList = new PriorityQueue<GridCellInformed>(100);
+		prunedList = new PriorityQueue<GridCellInformed>(100);
+		closedList = new GridCellInformed[map.getWidth()][map.getHeight()];
+		/* Solution stores */
+		incumbent = null;
+		goalFound = false;
+		/* Map parameters */
+		goalState = gState;
+		startHeuristic = map.hCost(sState, gState);
+		startTime = timeLeft;
+		minCost = map.getMinCost();
+		/* Get goal direction */
+		operatorPreference = new int[2]; // North & East
+		setOperatorPreference(sState, goalState);
+		/* Agent configuration */
+		weightG = 1f;
+		weightH = 1f;
+		/* DAS-specific parameters */
+		settlingTimeLeft = settlingTime;
+		/* Expansion and time counters */
+		for(int i = 0; i < windowSize; i++){
+			eDelayWindow[i] = 0;
+			tDelayWindow[i] = 0;
+		}
+	}
+
+	/****************************************************************
+	 * 				Closed list functions 
+	 * 
+	 * Set closed 
+	 * 
+	 * @param cell 
+	 */
 	private void markClosed(GridCellInformed cell){
 		closedList[cell.cell.getCoord().getX()][cell.cell.getCoord().getY()] = cell;
 	}
 
+	/** Set as open
+	 * 
+	 * @param cell
+	 */
 	private void unmarkClosed(GridCellInformed cell){
 		closedList[cell.cell.getCoord().getX()][cell.cell.getCoord().getY()] = null;
 	}
 
+	/**	Check if cell is closed
+	 * 
+	 * @param cell
+	 * @return true if closed, false if not
+	 */
 	private boolean isClosed(GridCellInformed cell){
 		return isClosed(cell.cell);
 	}
-
 	private boolean isClosed(GridCell cell){
 		return closedList[cell.getCoord().getX()][cell.getCoord().getY()] != null;
 	}
 
-	// You can if you want implement the methods below
+	/****************************************************************
+	 * 
+	 * 			Extract computed plan path from the goal found
+	 * 
+	 * Handy function to trace back the path from the goal node.
+	 * Make sure as you search, you set parent nodes for each child.
+	 * 
+	 * @param sState - start cell
+	 * @param goalNode - goal node found
+	 * @return full plan path
+	 */
+	private ComputedPlan extractPlan(GridCell sState, GridCellInformed goalNode){
+		/* Construct path from goal node */
+		ComputedPlan path = new ComputedPlan();
+		while(goalNode != null){
+			path.prependStep(goalNode.cell);
+			goalNode = goalNode.parent;
+		}
+		path.prependStep(sState);
+		return path;
+	}
 
 	// Do we want to show extra info? (e.g., close and open nodes, current path)
 	@Override
