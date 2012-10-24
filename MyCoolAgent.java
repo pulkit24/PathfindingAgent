@@ -578,15 +578,8 @@ public class MyCoolAgent implements PlanningAgent {
 
 		/*
 		 * For zero diffs, the operators don't matter - diagonals are already
-		 * set to zero above. 
-		 * First time (before any solution found), make it even more focused
+		 * set to zero above
 		 */
-		if(!goalFound){
-			if (Math.abs(xdiff)>Math.abs(ydiff))
-				operatorPreference[0] = 0;
-			if (Math.abs(ydiff)>Math.abs(xdiff))
-				operatorPreference[1] = 0;
-		}
 		if (ydiff == 0)
 			operatorPreference[0] = 0;
 		if (xdiff == 0)
